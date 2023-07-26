@@ -1,11 +1,12 @@
 //! Client implementation for the `bore` service.
 
 use std::sync::Arc;
-
+use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 use tracing::{error, info, info_span, warn, Instrument};
 use uuid::Uuid;
+use socket2::{SockRef, TcpKeepalive};
 
 use crate::auth::Authenticator;
 use crate::shared::{
@@ -121,9 +122,14 @@ impl Client {
 }
 
 async fn connect_with_timeout(to: &str, port: u16) -> Result<TcpStream> {
-    match timeout(NETWORK_TIMEOUT, TcpStream::connect((to, port))).await {
-        Ok(res) => res,
-        Err(err) => Err(err.into()),
-    }
-    .with_context(|| format!("could not connect to {to}:{port}"))
+    let stream = TcpStream::connect((to,port)).await?;
+    let sock_ref = SockRef::from(&stream);
+
+    let mut ka = TcpKeepalive::new();
+    ka = ka.with_time(Duration::from_secs(600));
+    ka = ka.with_interval(Duration::from_secs(60));
+
+    sock_ref.set_tcp_keepalive(&ka)?;
+    info!("using keepalive");
+    Ok(stream)
 }
